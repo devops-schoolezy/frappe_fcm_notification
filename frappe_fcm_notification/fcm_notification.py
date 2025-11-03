@@ -16,7 +16,7 @@ def cleanhtml(raw_html):
 def user_id(doc):
     user_email = doc.for_user
     user_device_id = frappe.get_all(
-        "User Device", filters={"user": user_email}, fields=["device_token"]
+        "User Device", filters={"user": user_email, "is_active": 1}, fields=["device_token"]
     )
     return user_device_id
 
@@ -162,4 +162,24 @@ def send_fcm_notification(notification,device_token): #Add device token #add doc
     else:
         error_message = f"Failed to send notification: {response.text}"
         frappe.log_error(error_message, "FCM Notification Error")
+        # Check for invalid/unregistered tokens and delete them
+        if any(err in error_message for err in ["NotFound", "Unregistered", "Requested entity was not found", "InvalidArgument"]):
+            short_token = device_token[:20] + "..."
+            frappe.log_error(
+                f"Deleted invalid FCM token (starts with): {short_token}",
+                "FCM Cleanup"
+            )
+            delete_invalid_device(device_token)
         return {"status": "failed", "error": error_message}
+
+def delete_invalid_device(token):
+    """Deletes User Device record if FCM token is invalid or expired."""
+    try:
+        device_name = frappe.db.get_value("User Device", {"device_token": token}, "name")
+        if device_name:
+            frappe.db.set_value("User Device", device_name, "is_active", 0)
+            frappe.db.commit()
+            frappe.logger().info(f"🗑️ Deactivated invalid device for token: {token}")
+    except Exception as e:
+        frappe.logger().error(f"Failed to delete device for token {token}: {e}")
+ 

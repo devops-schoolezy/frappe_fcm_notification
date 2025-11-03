@@ -11,11 +11,12 @@ from frappe_fcm_notification.fcm_notification import get_cached_access_token
 class UserDevice(Document):
 	
 	def after_insert(self):
+		pass
 
-		if self.device_type == "ios":
-			self.device_token = get_ios_device_token(self.device_token)
-			frappe.log_error(f"Device Token:","Device Token")
-			self.save()
+		# if self.device_type == "ios":
+		# 	self.device_token = get_ios_device_token(self.device_token)
+		# 	frappe.log_error(f"Device Token:","Device Token")
+		# 	self.save()
 
 @frappe.whitelist(allow_guest=True)
 def get_ios_device_token(device_token):
