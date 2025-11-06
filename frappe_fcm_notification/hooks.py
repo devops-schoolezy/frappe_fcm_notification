@@ -139,23 +139,11 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"frappe_fcm_notification.tasks.all"
-# 	],
-# 	"daily": [
-# 		"frappe_fcm_notification.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"frappe_fcm_notification.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"frappe_fcm_notification.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"frappe_fcm_notification.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"weekly": [
+		"frappe_fcm_notification.fcm_notification.delete_old_user_devices"
+	],
+}
 
 # Testing
 # -------

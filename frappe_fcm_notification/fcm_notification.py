@@ -177,9 +177,40 @@ def delete_invalid_device(token):
     try:
         device_name = frappe.db.get_value("User Device", {"device_token": token}, "name")
         if device_name:
-            frappe.db.set_value("User Device", device_name, "is_active", 0)
+            frappe.delete_doc("User Device", device_name, force=1)
             frappe.db.commit()
-            frappe.logger().info(f"🗑️ Deactivated invalid device for token: {token}")
+            frappe.logger().info(f"🗑️ Deleted invalid device for token: {token}")
     except Exception as e:
         frappe.logger().error(f"Failed to delete device for token {token}: {e}")
+
+def delete_old_user_devices():
+    """Deletes User Device records older than 1 month based on creation time."""
+    try:
+        # Calculate the cutoff date (1 month ago)
+        cutoff_date = add_to_date(now(), months=-1)
+        
+        # Get all User Device records older than 1 month
+        old_devices = frappe.get_all(
+            "User Device",
+            filters={
+                "creation": ["<", cutoff_date]
+            },
+            fields=["name"]
+        )
+        
+        deleted_count = 0
+        for device in old_devices:
+            try:
+                frappe.delete_doc("User Device", device.name, force=1)
+                deleted_count += 1
+            except Exception as e:
+                frappe.logger().error(f"Failed to delete old device {device.name}: {e}")
+        
+        frappe.db.commit()
+        frappe.logger().info(f"🗑️ Deleted {deleted_count} old User Device records (older than 1 month)")
+        return {"status": "success", "deleted_count": deleted_count}
+    except Exception as e:
+        frappe.logger().error(f"Error in delete_old_user_devices: {e}")
+        frappe.log_error(f"Error in delete_old_user_devices: {str(e)}", "FCM Cleanup Error")
+        return {"status": "failed", "error": str(e)}
  
