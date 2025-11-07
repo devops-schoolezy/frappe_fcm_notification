@@ -162,14 +162,77 @@ def send_fcm_notification(notification,device_token): #Add device token #add doc
     else:
         error_message = f"Failed to send notification: {response.text}"
         frappe.log_error(error_message, "FCM Notification Error")
-        # Check for invalid/unregistered tokens and delete them
-        if any(err in error_message for err in ["NotFound", "Unregistered", "Requested entity was not found", "InvalidArgument"]):
+        
+        # Parse error response to check for invalid/unregistered token error codes
+        # Reference: https://firebase.google.com/docs/cloud-messaging/error-codes
+        should_delete_device = False
+        error_code = None
+        
+        try:
+            error_response = response.json()
+            
+            if isinstance(error_response, dict) and "error" in error_response:
+                error_obj = error_response["error"]
+                
+                # Extract error code from different possible locations in FCM response
+                # FCM v1 API can return error codes in status, message, or details
+                error_code = (
+                    error_obj.get("status") or 
+                    error_obj.get("message", "") or
+                    ""
+                )
+                
+                # Check details array for FcmError errorCode
+                details = error_obj.get("details", [])
+                if details and isinstance(details, list):
+                    for detail in details:
+                        if isinstance(detail, dict):
+                            fcm_error_code = detail.get("errorCode") or detail.get("@type", "")
+                            if fcm_error_code:
+                                error_code = fcm_error_code
+                                break
+                
+                # Official Firebase error codes that indicate invalid/unregistered tokens
+                # Reference: https://firebase.google.com/docs/cloud-messaging/error-codes
+                invalid_token_codes = [
+                    "messaging/registration-token-not-registered",
+                    "messaging/invalid-registration-token",
+                    "messaging/invalid-argument",
+                    "NOT_FOUND",
+                    "INVALID_ARGUMENT",
+                    "UNREGISTERED"
+                ]
+                
+                # Check if error code matches invalid token codes
+                error_code_str = str(error_code).upper()
+                error_message_lower = str(error_obj.get("message", "")).lower()
+                
+                if any(code in error_code_str or code.lower() in error_message_lower for code in invalid_token_codes):
+                    should_delete_device = True
+                elif any(code in error_message_lower for code in ["registration-token-not-registered", "invalid-registration-token", "invalid-argument", "not found", "unregistered"]):
+                    should_delete_device = True
+                    
+        except (json.JSONDecodeError, AttributeError, KeyError, ValueError) as e:
+            # Fallback to string matching if JSON parsing fails
+            error_message_lower = error_message.lower()
+            if any(err in error_message_lower for err in [
+                "registration-token-not-registered",
+                "invalid-registration-token", 
+                "invalid-argument",
+                "notfound",
+                "unregistered",
+                "requested entity was not found"
+            ]):
+                should_delete_device = True
+        
+        if should_delete_device:
             short_token = device_token[:20] + "..."
             frappe.log_error(
-                f"Deleted invalid FCM token (starts with): {short_token}",
+                f"Deleted invalid FCM token (starts with): {short_token}, Error code: {error_code}",
                 "FCM Cleanup"
             )
             delete_invalid_device(device_token)
+        
         return {"status": "failed", "error": error_message}
 
 def delete_invalid_device(token):
