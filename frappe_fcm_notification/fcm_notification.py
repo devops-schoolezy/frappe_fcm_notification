@@ -7,6 +7,29 @@ from google.auth.transport import requests as google_requests
 from frappe.utils import now, add_to_date
 import re
 
+
+def extract_embedded_fcm_payload(notification):
+    if isinstance(notification, dict):
+        notification = frappe._dict(notification)
+
+    raw_body = notification.get("email_content") or ""
+    if not raw_body:
+        return {}
+
+    match = re.search(r"<!--FCM_PAYLOAD:(.*?)-->", raw_body, re.DOTALL)
+    if not match:
+        return {}
+
+    try:
+        payload = json.loads(match.group(1).strip())
+    except Exception:
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    return {str(key): payload[key] for key in payload}
+
 def cleanhtml(raw_html):
     cleanr = re.compile('<.*?>')
     cleantext = re.sub(cleanr, '', raw_html)
@@ -93,14 +116,14 @@ def get_cached_access_token():
 
         credentials_doc.access_token = access_token
         credentials_doc.expiration_time = expiration_time
-        credentials_doc.save()
+        # Many FCM jobs run in parallel; concurrent saves cause TimestampMismatchError.
+        credentials_doc.save(ignore_permissions=True, ignore_version=True)
         frappe.db.commit()
-
 
         return {"access_token": access_token}
     
     except Exception as e:
-        frappe.log_error(f"Error in get_cached_access_token: {str(e)}")
+        frappe.log_error(message=str(e)[:400], title="FCM get_cached_access_token")
         return {"error": str(e)}
 
 @frappe.whitelist()
@@ -110,10 +133,11 @@ def send_fcm_notification(notification,device_token): #Add device token #add doc
 
     """
 
-    frappe.log_error("Notification:", notification)
-    # frappe.log_error(f"Device Token: {device_token[:50]}", "FCM Debugging")
-    body = notification.email_content
-    title = notification.subject
+    if isinstance(notification, dict):
+        notification = frappe._dict(notification)
+
+    body = notification.get("email_content") or ""
+    title = notification.get("subject") or ""
 
     body = cleanhtml(body)
     title = cleanhtml(title)
@@ -121,10 +145,24 @@ def send_fcm_notification(notification,device_token): #Add device token #add doc
     if isinstance(device_token, dict):
         device_token = device_token.get('device_token')
     access_token = get_cached_access_token()
+    if not access_token or access_token.get("error"):
+        frappe.log_error(
+            message=str(access_token.get("error", "no token"))[:400],
+            title="FCM send skipped",
+        )
+        return {"status": "error", "message": access_token.get("error", "token")}
     headers = {
         'Authorization': f'Bearer {access_token["access_token"]}',
         'Content-Type': 'application/json; UTF-8',
     }
+    data_payload = {
+        "doctype": notification.document_type,
+        "docname": str(notification.document_name),
+    }
+    embedded_payload = extract_embedded_fcm_payload(notification)
+    if embedded_payload:
+        data_payload.update({key: str(value) if value is not None else "" for key, value in embedded_payload.items()})
+
     payload = {
         "message": {
             "token": device_token,
@@ -142,10 +180,7 @@ def send_fcm_notification(notification,device_token): #Add device token #add doc
                 }
             }
         },
-            "data": {
-                "doctype": notification.document_type,
-                "docname": str(notification.document_name),
-            }
+            "data": data_payload
         }
     }
 
